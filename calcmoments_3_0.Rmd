@@ -246,8 +246,8 @@ In the graph above, this would be then:
 Fill out your sampler locations.
 
 ```{r}
-sampler_rows = c(20,25,30)
-sampler_cols = c(75,79)
+sampler_rows = c(1)#c(20,25,30)
+sampler_cols = c(1)#c(75,79)
 ```
 
 ### The Volume per cell
@@ -262,9 +262,9 @@ Fill out your data.
 
 ```{r}
 
-delx = 1.0 #10.  dx=1.0 for test uniform k field
-dely = 1.0 #10.
-delz = 5.0 #10.
+delx = 2.0 #10.  dx=1.0 for test uniform k field
+dely = 2.0 #10.
+delz = 2.0 #10.
 porosity =0.3
 volume = delx*dely*delz*porosity
 x_origin = 0.0
@@ -288,8 +288,9 @@ When selected you will have a kind of spreadsheet overview of the data.
 ```{r}
 #Pump and Treat including wells, simulation has xxx NTTS time steps.
 #Trans_conc = readucn("MT3D001",NLAY = 1, NTTS = 145)
-# Trans_conc = readucn("uniform_k",NLAY = 1, NTTS = 73)
-Trans_conc = readucn("MT3D001_RvD",NLAY =1, NTTS = 100)
+#Trans_conc = readucn("uniform_k",NLAY = 1, NTTS = 73)
+#Trans_conc = readucn("MT3D001_RvD",NLAY =1, NTTS = 100)
+Trans_conc = readucn("testmom",NLAY = 1, NTTS = 63)
 ##pts is a vector containing all times steps and required for the calculation of the transient mass moments.
 pts = unique((Trans_conc$TIME))
 ## below the dimension of the transport model
@@ -315,6 +316,7 @@ The following functions can be used;
 4.  `calc_M1_y(data_set, M0_time, smpl = FALSE)`
 5.  `calc_M2_x(data_set, M0_time, M1_x_time, smpl = FALSE)`
 6.  `calc_M2_y(data_set, M0_time, M1_y_time, smpl = FALSE)`
+7.  `calc_M2_xy(data_set, M0_time, M1_y_time, smpl = FALSE)`
 
 #### 1 extract_sample_data()
 
@@ -636,10 +638,10 @@ for (i in 1:length(pts))#requires gifski and ellipse packages!!
   corxy = COVxy_time[i]/(sqrt(M2_x_time[i]) * sqrt(M2_y_time[i]))
   M  = matrix(c(1,corxy,corxy,1),ncol = 2, byrow=TRUE) #the correlation matrix seems to be required for ellipse
   
-  plot(M1_x_time[1:i],M1_y_time[1:i],type="l",xlim=c(10,50),asp=1,col="blue",lwd=2,
+  plot(M1_x_time[1:i],M1_y_time[1:i],type="l",xlim=c(0,nrCols*delx),asp=1,col="blue",lwd=2,
        main=paste("time=",pts[i]),xlab="x",ylab="y")
   points(M1_x_time[i],M1_y_time[i],pch=20,col="blue",cex=2)
-  polygon(ellipse(M,scale=c(M2_x_time[i],M2_y_time[i]),centre=c(M1_x_time[i],M1_y_time[i]),level=0.68,fill=TRUE),col=rgb(0,0,1,0.2),border=NA)
+  polygon(ellipse(M,scale=c(sqrt(M2_x_time[i]),sqrt(M2_y_time[i])),centre=c(M1_x_time[i],M1_y_time[i]),level=0.68,fill=TRUE),col=rgb(0,0,1,0.2),border=NA)
   grid(col="black")
 }
 

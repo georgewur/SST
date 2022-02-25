@@ -1,0 +1,648 @@
+---
+title: "Markdown for determining mass moments of the whole distribution and samplers"
+author: "G. Bier, P. Torfs"
+date: "March,2022"
+output:
+  html_notebook:
+    toc: yes
+  html_document:
+    toc: yes
+    df_print: paged
+subtitle: Course SLM21306
+---
+
+# Introduction
+
+As illustrated during the lectures. To describe a plume and its displacement in time (and space), calculating Mass moments are ideal tool for this. In an earlier exercise you have setup a spreadsheet to calculate the Oth, 1st and 2nd mass moment:
+
+
+$$
+\begin{align*}
+M0 &= \sum_{i=1}^{Tot_i}C_i\;n\;V_i \;\;\;\; &&&&\text{total mass} \\
+M1_x &= \frac{1}{M0} \sum_{i=1}^{Tot_i}x_i\;C_i\;n\;V_i &&\overline x &&\text{ x- coordinate mass center}\\
+M1_y &= \frac{1}{M0} \sum_{i=1}^{Tot_i}y_i\;C_i\;n\;V_i &&\overline y &&\text{ y- coordinate mass center}\\
+M2_{x,x} &= \frac{1}{M0}\sum_{i=1}^{Tot_i}C_i\;n\;V_i\;(x_i-\overline{x})^2 && \mathsf{VAR}_x &&\text{variance in the x direction}\\
+M2_{y,y} &= \frac{1}{M0}\sum_{i=1}^{Tot_i}C_i\;n\;V_i\;(y_i-\overline{y})^2 && \mathsf{VAR}_y &&\text{variance in the y direction}\\
+M2_{x,y} &= \frac{1}{M0}\sum_{i=1}^{Tot_i}C_i\;n\;V_i\;(x_i-\overline{x})\,(y_i-\overline{y}) && \mathsf{COV}_{xy} &&\text{covariance between x and y direction}\\
+\mathbf{C}_{x,y} &=
+\begin{bmatrix}
+\mathsf{VAR}_x & \mathsf{COV}_{x,y} \\  \mathsf{COV}_{y,x} & \mathsf{VAR}_y
+\end{bmatrix} &&&& \text{covariance matrix}\\
+\sigma_x &= \sqrt{\mathsf{VAR}_x} &&&& \text{standard deviation in x-direction}\\
+\sigma_y &= \sqrt{\mathsf{VAR}_y} &&&& \text{standard deviation in y-direction}\\
+\rho_{x,y} &= \frac{\mathsf{COV}_{x,y}}{\sigma_x\, \sigma_y} &&&& \text{correlation between x and y direction}
+\end{align*}
+$$
+
+With $V_i$ being the total volume of the block and $n$ the porosity.  
+It simply can be calculate based on: $V_i=\Delta x_i \,\Delta_i y\,D_i(x,y)\,n$.  
+$D_i(x,y)$ is the saturated thickness of the cell block and depends on the elevation of the groundwater table for phreatic conditions.  
+In our case, saturated thickness $D_i(x,y)$ is equal to $\Delta z$ since the cells are all fully saturated (due to the prescribed head boundary conditions, which are higher than the top elevations of the cells).
+
+This script can be used to calculate the mass moments for the whole concentration distribution **and** for a limited number of cells, mimicking observation locations (samplers)\
+Depending on the number and locations of the samplers, mass moments could be reproduced (based on the total distribution) reasonably or not.\
+The results will be illustrated visually comparing M0, M1 and M2 in time for both distributions.  
+Finally the covariance is calculated from which the correlation between $x$ and $y$ can be determined and illustrated in plot where the ellipse shows the propagation of the solute in spreading and local direction of the plume.
+
+# Procedure
+
+Only a few simple steps are required to analyse the results;
+
+1.  Check if the required packages are installed for reading the binary MT3DMS "MT3D001.UNC"
+
+2.  select a sequence of rows and columns for the sampler locations
+
+    1.  define $\Delta x\,\Delta y\,\Delta z$ and $\,n$ used in the model
+
+3.  load the "MASS001.UNC" file
+
+4.  analyse the results
+
+## Reading the binary concentration file
+
+Next is to run the script below to make sure that all other required packages are installed/loaded as well.
+
+First clean up memory and load some specific packages
+
+```{r, echo=FALSE}
+rm(list = ls())
+
+#Check to see if package(s) are installed, install if not and then load
+
+#pkgs is a vector of strings with length >= 1
+
+CheckInstallPackages <- function(pkgs){
+
+#For each pkg in pkgs (attempt to load each package one at a time):
+
+ x <- lapply(pkgs, function(pkg){
+
+  #Load the package if available,
+
+  if(!do.call("require", list(pkg))) {
+
+   #Silently attempt to install into the default library
+
+   try(install.packages(pkg, lib=.Library,repos="http://cran.rstudio.com"))
+
+   #Now attempt to load the package, catch error if it wasn't installed
+
+   tryCatch(do.call("library", list(pkg)),
+
+    #Catch if we're unable to install into the default library
+
+    error = function(err) {
+
+     #If non-interactive, install into this user's personal library
+
+     if(!interactive()) {
+
+      #Get the path to this user's personal library
+
+      personalLibPath <- Sys.getenv("R_LIBS_USER")
+
+      #If the personal library is not in the list of libraries
+
+      if(is.na(match(personalLibPath, .libPaths()))) {
+
+       #Then create the personal library
+
+       dir.create(personalLibPath, recursive = TRUE)
+
+       #And add the personal library to the list of libraries
+
+       .libPaths(personalLibPath)
+
+      }
+
+      #Attempt to install the package into the personal library
+
+      #If this fails, raise the error back to the report
+
+      install.packages(pkg, lib=personalLibPath, repos="http://cran.rstudio.com")
+
+      #Finally, attempt to load the package
+
+      do.call("library", list(pkg))
+
+ }})}})
+
+} 
+CheckInstallPackages(c("dplyr","knitr","crayon","rlang","glue","ellipse","gifski"))
+
+# No further action needed if the code block runs without complaints.
+```
+
+### Readunc funtion
+
+The function to read the concentration data from the MT3DMS simulation is developed by Dan Puddephat and licensed under MIT. It requires the aforementioned packages to run.
+
+One small adjustment is made by myself regarding the tibble dataframe function.
+
+This function should be loaded first.
+
+```{r}
+#' Read MT3DMS .ucn File
+#'
+#' This function reads in a binary ucn file and creates a data frame
+#' composed of the following elements:
+#' \describe{
+#' \item{TRANS}{Transport Time Step}
+#' \item{STP}{Flow Time Step}
+#' \item{PER}{Stress Period}
+#' \item{TIME}{Elapsed Time}
+#' \item{LAY}{Model Layer}
+#' \item{ROW}{Model Row}
+#' \item{COL}{Model Column}
+#' \item{CONC}{Concentration}
+#' }
+#' @param ucname This is the name of the ucn file
+#' @param NLAY This is the number of layers assigned to the model
+#' @param NTTS This is the number of transport time steps that are printed to the .ucn file. This can be obtained from the .btn file. 
+#' This will cause an error if the value assigned is greater than the correct value. Future versions will need to be developed so that NTTS is not
+#' needed for this function to operate properly.
+#' @export
+#' @examples
+#' readucn("MT3DMS001S", NLAY = 8, NTTS = 22)
+
+readucn <- function(ucrootname, NLAY, NTTS){
+  # NLAY IS THE NUMBER OF LAYERS IN THE MODEL
+  # NTTS IS THE NUMBER OF TRANSPORT TIME STEPS IN THE MODEL
+  ucname <- paste(ucrootname, ".ucn", sep = "")    
+  to.read <- file(ucname, "rb")    
+  TRANS <- c()
+  STP <- c()
+  PER <- c()
+  TIME <- c()
+  TEXT <- c()
+  LAY <- c()
+  CONC <- c()
+  dat <- c()
+  readblock <- function(){
+    TRANS <- readBin(to.read, integer(), n = 1)    
+    STP <- readBin(to.read, integer(), n = 1)
+    PER <- readBin(to.read, integer(), n = 1)
+    TIME <- readBin(to.read, double(), size = 4, n = 1)
+    TEXT <- readChar(to.read, 16)
+    NC <- readBin(to.read, integer(), n = 1)
+    NR <- readBin(to.read, integer(), n = 1)
+    LAY <- readBin(to.read, integer(), n = 1)
+    CONC <- readBin(to.read, double(), size = 4, n = NR * NC, endian = "little")
+    out <- list(TRANS, STP, PER, TIME, TEXT, NC, NR, LAY, CONC)
+    return(out)            
+  }    
+  for(Q in 1:NTTS){
+    for(K in 1:NLAY){
+      dat[[length(dat) + 1]] <- readblock()
+    }
+  }
+  close(to.read)
+  TRANS <- sapply(dat, "[[", 1)
+  STP <- sapply(dat, "[[", 2)
+  PER <- sapply(dat, "[[", 3)
+  TIME <- sapply(dat, "[[", 4)
+  LAY <- sapply(dat, "[[", 8)
+  NC <- dat[[1]][6] %>% as.integer
+  NR <- dat[[1]][7] %>% as.integer
+  CONC <- sapply(dat, "[[", 9)
+  # UCN <- tibble::data_frame( "data_frame was deprecated in tibble 1.1.0. GB-WUR 8/4/21
+  UCN <- tibble::tibble(
+    TRANS = rep(TRANS, each = (NC * NR)) %>% as.integer(),
+    STP = rep(STP, each = (NC * NR)) %>% as.integer(),
+    PER = rep(PER, each = (NC * NR)) %>% as.integer(), 
+    TIME = rep(TIME, each = (NC * NR)) %>% as.double(),  
+    LAY = rep(LAY, each = (NC * NR)) %>% as.integer(),
+    ROW = rep(rep(rep(1:NR, each = NC), NLAY), NTTS) %>% as.integer(), 
+    COL = rep(rep(rep(seq(1, NC, 1), NR), NLAY), NTTS) %>% as.integer(),
+    CONC = CONC %>% as.double()
+  )
+  rm(TRANS)
+  rm(STP)
+  rm(CONC)
+  rm(LAY)
+  rm(NR)
+  rm(NC)
+  rm(TEXT)
+  rm(TIME)
+  rm(PER)    
+  rm(dat)
+  gc()
+  return(UCN)        
+}
+```
+
+## Selecting the positions for the concentration time series, the sampler locations
+
+Below an illustration how to select the positions and to select the appropriate speed button (see arrows in clip)
+
+![Figure 1: Selecting the positions](select_positions.png)
+
+At this stage of the script it is required to setup a sequence of row and a sequence of columns.\
+In the graph above, this would be then:
+
+-   `sampler_rows = c(5,10,15)`
+-   `sampler_cols = c(5,15,30)`
+
+Fill out your sampler locations.
+
+```{r}
+sampler_rows = c(20,25,30)
+sampler_cols = c(75,79)
+```
+
+### The Volume per cell
+
+To derive the **mass** moments we need to transform the concentration to mass. so the volume is required.\
+Since M1 and M2 require the positions of the concentrations, a reference/origin of the coordinate system is required. Here we simply assume the at the lower left corner the coordinates start with:
+
+-   `x_origin = 0.0`\
+-   `y_origin = 0.0`
+
+Fill out your data.
+
+```{r}
+
+delx = 1.0 #10.  dx=1.0 for test uniform k field
+dely = 1.0 #10.
+delz = 5.0 #10.
+porosity =0.3
+volume = delx*dely*delz*porosity
+x_origin = 0.0
+y_origin = 0.0
+
+```
+
+## Load the "MASS001.UNC"
+
+When MT3DMS was run successfully it will write the concentration distributions in the MASS001.UNC file.\
+The next important step is to know the Number of Transport Time Steps of the run. This number, the `NTTS` variable in the following code line is required for loading the complete set of distributions.\
+Select the concentration distribution which will be analyzed and see how large NTTS is:
+
+![Figure 2: The number of Transport Time Steps NTTS; NTTS = 217 in this example](NTTS.png)
+
+Simlply run the chunk below to get the data loaded en have a look in the upper right pane how this `Trans_conc` file.
+
+Care should be taken regarding the NTTS argument! Be sure to have set the proper value (i.e. $NTTS \le \text{max. number of time steps}$ )since the `readunc` function will crash otherwise.\
+When selected you will have a kind of spreadsheet overview of the data.
+
+```{r}
+#Pump and Treat including wells, simulation has xxx NTTS time steps.
+#Trans_conc = readucn("MT3D001",NLAY = 1, NTTS = 145)
+# Trans_conc = readucn("uniform_k",NLAY = 1, NTTS = 73)
+Trans_conc = readucn("MT3D001_RvD",NLAY =1, NTTS = 100)
+##pts is a vector containing all times steps and required for the calculation of the transient mass moments.
+pts = unique((Trans_conc$TIME))
+## below the dimension of the transport model
+nrCols = max(Trans_conc$COL)
+nrRows = max(Trans_conc$ROW)
+
+```
+
+## Analyse the results
+
+The first chunk consists of the functions required to calculate all mass moments.\
+It is sufficient to have some understanding, e.g. can you see the lines where M0, M1 and or M2 are all calculated, of these functions but more important are the arguments to use.
+
+The latter code chunk contains some basic plot commands for comparison. Feel free to adjust when required.
+
+### Mass Moment functions
+
+The following functions can be used;
+
+1.  `extract_sample_data()`
+2.  `calc_M0(data_set)`
+3.  `calc_M1_x(data_set, M0_time, smpl = FALSE)`
+4.  `calc_M1_y(data_set, M0_time, smpl = FALSE)`
+5.  `calc_M2_x(data_set, M0_time, M1_x_time, smpl = FALSE)`
+6.  `calc_M2_y(data_set, M0_time, M1_y_time, smpl = FALSE)`
+
+#### 1 extract_sample_data()
+
+This function extracts the concentration time series of the selected (sample) locations.\
+It requires `sampler_rows` and `sampler_cols` to determine which values should be extracted.\
+It does not require any arguments.\
+The output is a data set containing time series of the concentration at the selected locations.
+
+#### 2 calc_M0(data_set)
+
+This function calculates the total mass of the distribution series of `data_set`.\
+The argument: `data_set` could be the whole data set: `Trans_conc` or only the sampler data: `Sample_conc`\
+The output is a time series of the masses of the `data_set`.
+
+#### 3 calc_M1_x(data_set, M0_time, smpl = FALSE)
+
+This function calculates the first mass moment (mass midpoint) in the x-direction in time of the `data_set`.\
+`M0_time` is the time series of the mass of the selected `data_set`.\
+`smpl = FALSE` is Boolean indicating whether the `data_set` contains only data for the sampler locations (`TRUE`). Default is set to `FALSE`, expecting the whole concentration distribution.
+
+#### 4 calc_M1_y(data_set, M0_time, smpl = FALSE)
+
+This function calculates the first mass moment (mass midpoint) in the y-direction in time of the `data_set`.\
+`M0_time` is the time series of the mass of the selected `data_set`.\
+`smpl = FALSE` is Boolean indicating wheter the `data_set` contains only data for the sampler locations (`TRUE`). Default is set to `FALSE`, expecting the whole concentration distribution.
+
+#### 5 calc_M2_x(data_set, M0_time, M1_x\_time, smpl = FALSE)
+
+This function calculates the second mass moment (spreading of mass) in the x-direction in time of the `data_set`.\
+`M0_time` is the time series of the mass of the selected `data_set`.\
+`M1_x_time` is the first mass moment, mass midpoint, in the x-direction which required to determine the standard deviation (spread) of the plume. `smpl = FALSE` is Boolean indicating wheter the `data_set` contains only data for the sampler locations (`TRUE`). Default is set to `FALSE`, expecting the whole concentration distribution.
+
+#### 6 calc_M2_y(data_set, M0_time, M1_y\_time, smpl = FALSE)
+
+This function calculates the second mass moment (spreading of mass) in the y-direction in time of the `data_set`.\
+`M0_time` is the time series of the mass of the selected `data_set`.\
+`M1_y_time` is the first mass moment, mass midpoint, in the y-direction which required to determine the standard deviation (spread) of the plume. `smpl = FALSE` is Boolean indicating wheter the `data_set` contains only data for the sampler locations (`TRUE`). Default is set to `FALSE`, expecting the whole concentration distribution. 
+
+#### 7 Calc_M2_xy(data_set, M0_time, M1_x_time,M1_y_time, smpl = FALSE)
+
+This function calculated the covariance between x and y in time of `data_set` 
+`M0_time` is the time series of the mass of the selected `data_set`.\
+`M1_y_time` is the first mass moment, mass midpoint, in the y-direction which required to determine the standard deviation (spread) of the plume. `smpl = FALSE` is Boolean indicating wheter the `data_set` contains only data for the sampler locations (`TRUE`). Default is set to `FALSE`, expecting the whole concentration distribution. 
+
+```{r}
+extract_sample_data = function()
+{
+  sample_ROW = filter(Trans_conc, ROW %in% sampler_rows)
+  sample_ROW_COL = filter(sample_ROW, COL %in% sampler_cols)
+  return(sample_ROW_COL)
+}
+
+
+Calc_M0 = function(data_set)
+{
+  M0_time = c()
+  for (i in 1:length(pts))
+  {
+    time_step = pts[i]
+    M0 = volume*sum(subset(data_set, TIME == time_step, select = CONC))
+    M0_time = c(M0_time,M0)
+  }
+  return(M0_time)
+}
+
+
+
+Calc_M1_x = function(data_set, M0_time,smpl = FALSE)
+{
+  if (smpl == TRUE)
+  {
+    nrCols = length(sampler_cols)
+    col_numbers = sampler_cols
+  }else{
+    col_numbers = rep(1:nrCols) # the actual column numbers to process
+  }
+  M1_pts = c()
+  for (i in 1:length(pts))
+  {
+    M1_cols = c()
+    time_step = pts[i] #cycle through all time steps
+    for (c in 1:nrCols) #cycle through all columns
+    {
+      Sum_C_col = sum(subset(data_set, TIME == time_step & COL == col_numbers[c], select = CONC))
+      #print(Sum_C_col)
+      M1_c = volume*(x_origin + col_numbers[c]*delx - delx/2)*Sum_C_col
+      M1_cols = c(M1_cols,M1_c)
+      #print(M1_c)
+    }
+    M1_x = 1/M0_time[i]*sum(M1_cols)
+    print(cat("timestep :",i, "M1_x :",M1_x))
+    M1_pts = c(M1_pts,M1_x)
+  }
+  return(M1_pts)
+}
+
+
+
+Calc_M2_x = function(data_set, M0_time, M1_x_time, smpl = FALSE)
+{
+  if (smpl == TRUE)
+  {
+    nrCols = length(sampler_cols)
+    col_numbers = sampler_cols
+  }else{
+    col_numbers = rep(1:nrCols)
+  }
+  M2_pts = c()
+  for (i in 1:length(pts))
+  {
+    M2_cols = c()
+    time_step = pts[i]
+    for (c in 1:nrCols)
+    {
+      Sum_C_col = sum(subset(data_set, TIME == time_step & COL == col_numbers[c], select = CONC))
+      M2_c = volume*Sum_C_col*((x_origin + col_numbers[c]*delx - delx/2) - M1_x_time[i])^2
+      M2_cols = c(M2_cols,M2_c)
+    }
+    #M2_x = sqrt(1/M0_time[i]*sum(M2_cols)) is the standard deviaton and not M2_x
+    M2_x = 1/M0_time[i]*sum(M2_cols)
+    print(cat("timestep :",i, "M2_x :",M2_x))
+    M2_pts = c(M2_pts,M2_x)
+  }
+  return(M2_pts)
+}
+
+
+
+Calc_M1_y = function(data_set, M0_time, smpl = FALSE)
+  #Be aware that row numbering starts at the top and not at the bottom
+{
+  if (smpl == TRUE)
+  {
+    loc_nrRows = length(sampler_rows)
+    row_numbers = sampler_rows
+  }else{
+    row_numbers = rep(1:nrRows)
+    loc_nrRows = nrRows
+  }
+  M1_pts = c()
+  for (i in 1:length(pts))
+  {
+    M1_rows = c()
+    time_step = pts[i]  
+    for (r in 1:loc_nrRows)
+    {
+      Sum_C_row = sum(subset(data_set, TIME == time_step & ROW == row_numbers[r], select = CONC))
+#      M1_r = volume*(y_origin + row_numbers[r] - dely/2) * Sum_C_row
+      M1_r = volume*(y_origin + (nrRows - row_numbers[r])*dely + dely/2) * Sum_C_row
+      M1_rows = c(M1_rows,M1_r)
+    }
+    M1_y = 1/M0_time[i]*sum(M1_rows)
+    print(cat("timestep :",i, "M1_y :",M1_y))
+    print(i)
+    M1_pts = c(M1_pts,M1_y)
+  }
+  return(M1_pts)
+}
+
+
+Calc_M2_y = function(data_set,M0_time,M1_y_time, smpl=FALSE)
+{
+  if (smpl == TRUE)
+  {
+    loc_nrRows = length(sampler_rows)
+    row_numbers = sampler_rows
+  }else{
+    row_numbers = rep(1:nrRows)
+    loc_nrRows = nrRows
+  }
+  M2_pts = c()
+  for (i in 1:length(pts))
+  {
+    M2_rows = c()
+    time_step = pts[i]  
+    for (r in 1:loc_nrRows)
+    {
+      Sum_C_row = sum(subset(data_set, TIME == time_step & ROW == row_numbers[r], select = CONC))
+      # M2_r = volume*Sum_C_row*((y_origin + row_numbers[r] - dely/2)- M1_y_time[i])^2
+      M2_r = volume*Sum_C_row*((y_origin + (nrRows - row_numbers[r])*dely + dely/2)- M1_y_time[i])^2
+      M2_rows = c(M2_rows,M2_r)
+    }
+    #M2_y = sqrt(1/M0_time[i]*sum(M2_rows)) sqrt is standard deviation
+    M2_y = 1/M0_time[i]*sum(M2_rows)
+    print(cat("timestep :",i, "M2_x :",M2_y))
+    M2_pts = c(M2_pts,M2_y)
+  }
+  return(M2_pts)
+}
+
+
+Calc_M2_xy = function(data_set, M0_time, M1_x_time, M1_y_time, smpl = FALSE)
+  #to calculate the covariance the procedure below cycles through the grid in a column wise fashion
+  #at every cell of the grid, the concentration is retrieved from the data set
+  #and is the position in x and y known from which the covariance can be calculated
+  #Cov(x,y) = Volume*C_row_col*(row -avg_row)*(col - avg_col)
+{
+  if (smpl == TRUE)
+  {
+    nrCols = length(sampler_cols)
+    col_numbers = sampler_cols
+    nrRows = length(sampler_rows)
+    row_numbers = sampler_rows
+  }else{
+    col_numbers = rep(1:nrCols)
+    row_numbers = rep(1:nrRows)
+  }
+  M2_xy_pts = c()
+  
+  for (timestep in 1:length(pts))
+  {
+    #select all Ci from one time step
+    C_timestep = subset(data_set, TIME == pts[timestep], select = CONC)
+    #print(cat("time:",timestep," conc: ",C_timestep$CONC))
+    # Sum_M2_xy is a container for M2_xy for this time step
+    Sum_M2_xy = 0
+    for (row in 1:nrRows)#row numbers starts at the top!
+    {
+      for (col in 1:nrCols)
+      {
+        y_i = y_origin + (nrRows - row_numbers[row])*dely + dely/2
+        x_i = x_origin + (col_numbers[col]*delx - delx/2)
+        C_i = C_timestep$CONC[(row-1) * nrCols + col]
+        M2_xy = volume * C_i * ((x_i - M1_x_time[timestep]) * (y_i - M1_y_time[timestep]))
+        #print(cat('xi ',x_i,"yi",y_i,"Ci",C_i,"M2_xy",M2_xy))
+        #print(cat('col ',col,"row",row,"Ci",C_i,"M2_xy",M2_xy))
+        Sum_M2_xy = Sum_M2_xy + M2_xy
+      }
+    }
+    #a simple check if counters row and col results in the same number to C_timestep
+    if (length(C_timestep$CONC) != nrRows * nrCols)
+    {
+      print("Something went wrong determining COV(x,y)")
+      #break
+    }
+    COVXY = 1/M0_time[timestep] * Sum_M2_xy
+    print(cat("time step :",timestep, "COV(x,y) :", COVXY))
+    M2_xy_pts = c(M2_xy_pts,COVXY)
+  }
+  return(M2_xy_pts)
+}
+
+
+```
+
+### Plotting the results
+
+The following code chunk contains some basic plot commands to compare the different Mass Moments of the total concentration distribution and the time serie of concentration at the sampler locations only.\
+Feel free to adjust if required.
+
+```{r}
+#extract the sampler data from the MASS001.UNC file
+Sample_conc = extract_sample_data()
+
+#calculate the total mass for both data sets and plot the results
+M0_time = Calc_M0(Trans_conc)
+SM0_time = Calc_M0(Sample_conc)
+
+y_range = c(min(M0_time,SM0_time),max(M0_time,SM0_time))
+plot(pts,M0_time, type="l",col="blue",
+     lwd=2,ylim = y_range,main = "Total mass; red: sample",
+     xlab = 'time (d)',ylab = "M0 (kg)")
+lines(pts,SM0_time,col="red",lwd=2)
+grid()
+
+#Calculate the mass midpoint in the x-direction in time M1 and plot the results
+M1_x_time = Calc_M1_x(Trans_conc, M0_time)#, smpl = FALSE)
+SM1_x_time = Calc_M1_x(Sample_conc, SM0_time,smpl = TRUE)
+
+y_range = c(min(M1_x_time,SM1_x_time,na.rm = T),max(M1_x_time,SM1_x_time,na.rm = T))
+#y_range = c(min(M1_x_time),max(M1_x_time))
+plot(pts,M1_x_time, type="l",col="blue",
+     lwd=2,ylim = y_range,main = "Total mass midpoint in x M1; red: sample",
+     xlab = 'time (d)',ylab = "M1 x-direction (m)")
+lines(pts,SM1_x_time,col="red",lwd=2)
+grid()
+
+#Calculate the mass midpoint in the y-direction in time M1 and plot the results
+M1_y_time = Calc_M1_y(Trans_conc, M0_time)#, smpl = FALSE)
+SM1_y_time = Calc_M1_y(Sample_conc, SM0_time,smpl = TRUE)
+y_range = c(min(M1_y_time,SM1_y_time,na.rm = T),max(M1_y_time,SM1_y_time,na.rm = T))
+plot(pts,M1_y_time, type="l",col="blue",
+     lwd=2,ylim = y_range,main = "Total mass midpoint in y M1; red: sample",
+     xlab = 'time (d)',ylab = "M1 y-direction (m)")
+lines(pts,SM1_y_time,col="red",lwd=2)
+grid()
+
+
+#Calculate the mass spreading (standard deviation) M2 in the x-direction in time and plot the results
+M2_x_time = Calc_M2_x(Trans_conc, M0_time, M1_x_time)#, smpl = FALSE)
+SM2_x_time = Calc_M2_x(Sample_conc, SM0_time, SM1_x_time, smpl = TRUE)
+
+y_range = c(min(M2_x_time,SM2_x_time,na.rm = T),max(M2_x_time,SM2_x_time,na.rm = T))
+plot(pts,M2_x_time, type="l",col="blue",
+     lwd=2,ylim = y_range,main = "Total mass spreading (sigma) M2 in x;  red: sample",
+     xlab = 'time',ylab = "M2 x-direction (m)")
+lines(pts,SM2_x_time,col="red",lwd=2)
+grid()
+
+#Calculate the mass spreading (standard deviation) M2 in the y-direction in time and plot the results
+M2_y_time = Calc_M2_y(Trans_conc, M0_time, M1_y_time)#, smpl = FALSE)
+SM2_y_time = Calc_M2_y(Sample_conc, SM0_time, SM1_y_time, smpl = TRUE)
+y_range = c(min(M2_y_time,SM2_y_time,na.rm = T),max(M2_y_time,SM2_y_time,na.rm = T))
+plot(pts,M2_y_time, type="l",col="blue",
+     lwd=2,ylim = y_range,main = "Total mass spreading (sigma) M2 in y ; red: sample",
+     xlab = 'time (d)',ylab = "M2 y-direction (m)")
+lines(pts,SM2_y_time,col="red",lwd=2)
+grid()
+
+```
+
+The covariance of the simulation per time step
+
+```{r}
+COVxy_time = Calc_M2_xy(Trans_conc,M0_time,M1_x_time,M1_y_time)
+
+for (i in 1:length(pts))#requires gifski and ellipse packages!!
+{
+  corxy = COVxy_time[i]/(M2_x_time[i] * M2_y_time[i])
+  M  = matrix(c(1,corxy,corxy,1),ncol = 2, byrow=TRUE) #the correlation matrix seems to be required for ellipse
+  
+  plot(M1_x_time[1:i],M1_y_time[1:i],type="l",xlim=c(10,50),asp=1,col="blue",lwd=2,
+       main=paste("time=",pts[i]),xlab="x",ylab="y")
+  points(M1_x_time[i],M1_y_time[i],pch=20,col="blue",cex=2)
+  polygon(ellipse(M,scale=c(M2_x_time[i],M2_y_time[i]),centre=c(M1_x_time[i],M1_y_time[i]),level=0.68,fill=TRUE),col=rgb(0,0,1,0.2),border=NA)
+  grid(col="black")
+}
+
+
+```
+

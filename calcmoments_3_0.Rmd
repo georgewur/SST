@@ -633,7 +633,7 @@ COVxy_time = Calc_M2_xy(Trans_conc,M0_time,M1_x_time,M1_y_time)
 
 for (i in 1:length(pts))#requires gifski and ellipse packages!!
 {
-  corxy = COVxy_time[i]/(M2_x_time[i] * M2_y_time[i])
+  corxy = COVxy_time[i]/(sqrt(M2_x_time[i]) * sqrt(M2_y_time[i]))
   M  = matrix(c(1,corxy,corxy,1),ncol = 2, byrow=TRUE) #the correlation matrix seems to be required for ellipse
   
   plot(M1_x_time[1:i],M1_y_time[1:i],type="l",xlim=c(10,50),asp=1,col="blue",lwd=2,

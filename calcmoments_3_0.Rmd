@@ -3,11 +3,11 @@ title: "Markdown for determining mass moments of the whole distribution and samp
 author: "G. Bier, P. Torfs"
 date: "March,2022"
 output:
-  html_notebook:
-    toc: yes
   html_document:
     toc: yes
     df_print: paged
+  html_notebook:
+    toc: yes
 subtitle: Course SLM21306
 ---
 
@@ -631,7 +631,7 @@ grid()
 
 The covariance of the simulation per time step
 
-```{r}
+```{r, animation.hook='gifski'}
 COVxy_time = Calc_M2_xy(Trans_conc,M0_time,M1_x_time,M1_y_time)
 
 for (i in 1:length(pts))#requires gifski and ellipse packages!!

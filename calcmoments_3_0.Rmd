@@ -3,11 +3,11 @@ title: "Markdown for determining mass moments of the whole distribution and samp
 author: "G. Bier, P. Torfs"
 date: "March,2022"
 output:
+  html_notebook:
+    toc: yes
   html_document:
     toc: yes
     df_print: paged
-  html_notebook:
-    toc: yes
 subtitle: Course SLM21306
 ---
 
@@ -291,7 +291,8 @@ When selected you will have a kind of spreadsheet overview of the data.
 #Trans_conc = readucn("uniform_k",NLAY = 1, NTTS = 73)
 #Trans_conc = readucn("MT3D001_RvD",NLAY =1, NTTS = 100)
 #Trans_conc = readucn("testmom",NLAY = 1, NTTS = 63)
-Trans_conc = readucn("GMS10_6",NLAY = 1, NTTS = 63)
+# Trans_conc = readucn("GMS10_6",NLAY = 1, NTTS = 63)
+Trans_conc = readucn("Hetero_H_F_nl1",NLAY = 1, NTTS = 73)
 ##pts is a vector containing all times steps and required for the calculation of the transient mass moments.
 pts = unique((Trans_conc$TIME))
 ## below the dimension of the transport model
